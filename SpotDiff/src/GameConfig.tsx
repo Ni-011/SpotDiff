@@ -8,6 +8,8 @@ const Input = React.memo(({
     <label className="block text-base sm:text-lg font-semibold text-gray-700 mb-2">{label}</label>
     <input
       type={type}
+      id={field}
+      name={field}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className={`w-full px-4 sm:px-5 py-2 sm:py-3 border rounded-xl focus:ring-4 focus:ring-purple-300 focus:border-transparent transition-all duration-300 ease-in-out text-base sm:text-lg ${error ? 'border-red-500 bg-red-50' : 'border-gray-300 bg-white'}`}

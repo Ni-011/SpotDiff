@@ -1,9 +1,16 @@
 {
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
-    "@types/node": "^24.0.12"
+    "@types/node": "^24.0.12",
+    "vite": "^7.0.4"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.3"
-  }
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "packageManager": "pnpm@10.11.0+sha512.6540583f41cc5f628eb3d9773ecee802f4f9ef9923cc45b69890fb47991d4b092964694ec3a4f738a420c918a333062c8b925d312f42e4f0c263eb603551f977"
 }
