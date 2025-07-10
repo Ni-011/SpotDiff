@@ -1,250 +1,162 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import confetti from 'canvas-confetti';
+import GameConfigComponent from './GameConfig';
 import type { GameConfig } from './types/game';
 
-// Inner component for rendering an image and its difference markers
-const GameImage = ({
-  src,
-  alt,
-  differences,
-  found,
-  handleClick,
-}: {
-  src: string;
-  alt: string;
-  differences: GameConfig['differences'];
-  found: Set<number>;
-  handleClick: (event: React.MouseEvent<HTMLImageElement>) => void;
-}) => (
-  <div className="relative">
-    <img
-      src={src}
-      alt={alt}
-      className="border-2 border-gray-300 rounded-lg shadow-lg max-w-full h-auto"
-      style={{ cursor: 'crosshair' }}
-      onClick={handleClick}
-    />
-    {/* Found difference markers */}
-    <div className="absolute inset-0 pointer-events-none">
-      {differences.map((diff, i) =>
-        found.has(i) && (
-          <div
-            key={i}
-            className="absolute border-4 border-red-500 bg-red-300 bg-opacity-60 rounded-full animate-pulse flex items-center justify-center"
-            style={{
-              left: `${(diff.x / 600) * 100}%`,
-              top: `${(diff.y / 400) * 100}%`,
-              width: `${(diff.width / 600) * 100}%`,
-              height: `${(diff.height / 400) * 100}%`,
-            }}
-          >
-            <span className="text-white font-bold text-2xl">✓</span>
-          </div>
-        )
-      )}
-    </div>
-  </div>
-);
+const STORAGE_KEY = 'spotTheDiffCustomConfig';
 
 export default function SpotTheGame() {
-  const [config, setConfig] = useState<GameConfig | null>(null);
-  const [found, setFound] = useState<Set<number>>(new Set());
-  const [loading, setLoading] = useState(false);
-  const [gameStarted, setGameStarted] = useState(false);
-  const [startTime, setStartTime] = useState<number | null>(null);
-  const [elapsedTime, setElapsedTime] = useState<number>(0);
-  const [isComplete, setIsComplete] = useState(false);
+  const [game, setGame] = useState<GameConfig | null>(null);
+  const [foundDiffs, setFoundDiffs] = useState<number[]>([]);
+  const [startTime, setStartTime] = useState<number>(0);
+  const [timeTaken, setTimeTaken] = useState<number>(0);
+  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null);
+  const [showConfig, setShowConfig] = useState(false);
+  const [customConfig, setCustomConfig] = useState<GameConfig | null>(null);
+  const clickDebounceRef = useRef<boolean>(false);
 
-  // Load game config
+  const loadGame = useCallback(async (cfg: GameConfig) => {
+    setGame(cfg);
+    setFoundDiffs([]);
+    setStartTime(Date.now());
+    setTimeTaken(0);
+    setMessage(null);
+  }, []);
+
+  const resetGame = useCallback(() => {
+    setGame(null);
+    setFoundDiffs([]);
+    setStartTime(0);
+    setTimeTaken(0);
+    setMessage(null);
+  }, []);
+
   useEffect(() => {
-    if (!gameStarted) return;
+    try {
+      const storedCfg = localStorage.getItem(STORAGE_KEY);
+      if (storedCfg) setCustomConfig(JSON.parse(storedCfg));
+    } catch (e) { console.error("Failed to load custom config from localStorage", e); }
+  }, []);
 
-    setLoading(true);
-    fetch('/games/sample-game.json')
-      .then(res => res.json())
-      .then(data => {
-        setConfig(data);
-        setLoading(false);
-        setStartTime(Date.now());
-        setElapsedTime(0);
-        setIsComplete(false);
-      })
-      .catch(error => {
-        console.error("Error loading game:", error);
-        setLoading(false);
-      });
-  }, [gameStarted]);
-
-  // Timer logic
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | undefined;
-    if (startTime !== null && !isComplete) {
-      interval = setInterval(() => {
-        setElapsedTime(Date.now() - startTime);
-      }, 1000);
-    } else if (isComplete) {
-      clearInterval(interval);
+    let timer: NodeJS.Timeout | undefined;
+    const allFound = foundDiffs.length === (game?.differences.length || 0);
+    if (startTime && !allFound) {
+      timer = setInterval(() => setTimeTaken(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    } else if (startTime && allFound) {
+      confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+      setMessage({ text: `🎉 All differences found in ${timeTaken} seconds!`, type: 'success' });
     }
-    return () => clearInterval(interval);
-  }, [startTime, isComplete]);
+    return () => { if (timer) clearInterval(timer); };
+  }, [startTime, foundDiffs.length, game?.differences.length, timeTaken]);
 
-  // Sound effects
-  const playClickSound = () => {
-    const audio = new Audio('/sounds/click.mp3');
-    audio.play().catch(e => console.error("Error playing click sound:", e));
-  };
+  const checkDiff = useCallback((e: React.MouseEvent<HTMLImageElement>) => {
+    if (clickDebounceRef.current || !game || foundDiffs.length === game.differences.length) return;
 
-  const playSuccessSound = () => {
-    const audio = new Audio('/sounds/success.mp3');
-    audio.play().catch(e => console.error("Error playing success sound:", e));
-  };
+    clickDebounceRef.current = true;
+    setTimeout(() => { clickDebounceRef.current = false; }, 300);
 
-  // Handle image clicks
-  const handleClick = (event: React.MouseEvent<HTMLImageElement>) => {
-    if (!config || isComplete) return;
+    const { left: rL, top: rT, width: rW, height: rH } = e.currentTarget.getBoundingClientRect();
+    const cX = (e.clientX - rL) * (600 / rW);
+    const cY = (e.clientY - rT) * (400 / rH);
 
-    const img = event.currentTarget;
-    const rect = img.getBoundingClientRect();
-    const x = (event.clientX - rect.left) * (600 / rect.width);
-    const y = (event.clientY - rect.top) * (400 / rect.height);
-
-    let newFoundCount = found.size;
-
-    // Check each difference area
-    config.differences.forEach((diff, index) => {
-      if (found.has(index)) return;
-      
-      const isHit = (
-        x >= diff.x && 
-        x <= diff.x + diff.width && 
-        y >= diff.y && 
-        y <= diff.y + diff.height
-      );
-
-      if (isHit) {
-        setFound(prev => {
-          const newSet = new Set([...prev, index]);
-          newFoundCount = newSet.size;
-          return newSet;
-        });
-        playClickSound();
+    let found = false;
+    game.differences.forEach((d, i) => {
+      if (!foundDiffs.includes(i) && cX >= d.x && cX <= d.x + d.width && cY >= d.y && cY <= d.y + d.height) {
+        setFoundDiffs(p => [...p, i]);
+        setMessage({ text: '💡 Difference found!', type: 'info' });
+        found = true;
       }
     });
-    
-    if (newFoundCount === config.differences.length && !isComplete) {
-        setIsComplete(true);
-        playSuccessSound();
-    }
-  };
+    if (!found) setMessage({ text: '❌ No difference there. Keep looking!', type: 'error' });
+  }, [game, foundDiffs]);
 
-  const startGame = () => setGameStarted(true);
-  const resetGame = () => {
-    setFound(new Set());
-    setGameStarted(false);
-    setElapsedTime(0);
-    setStartTime(null);
-    setIsComplete(false);
-  };
+  const handleSave = useCallback((cfg: GameConfig) => {
+    setCustomConfig(cfg);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+    setShowConfig(false);
+    loadGame(cfg);
+  }, [loadGame]);
 
-  // Function to format time for display
-  const formatTime = (ms: number) => {
-    const seconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
-  };
+  const handleCancel = useCallback(() => {
+    setShowConfig(false);
+  }, []);
 
-  const isCompleteGame = found.size === config?.differences.length;
-
-  // Start screen
-  if (!gameStarted) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl shadow-2xl p-12 text-center">
-          <h1 className="text-5xl font-bold text-gray-900 mb-6">Spot the Difference!</h1>
-          <p className="text-gray-700 mb-8">Find all the differences between the two images.</p>
-          <button
-            onClick={startGame}
-            className="px-8 py-4 bg-blue-600 text-white font-bold text-xl rounded-lg hover:bg-blue-700 transition"
-          >
-            Play Game
-          </button>
+  const GameDisplay = () => (
+    <div className="flex flex-col items-center bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen p-4 sm:p-8 font-sans transition-all duration-500 ease-in-out">
+      {message && (
+        <div className={`py-3 px-6 rounded-lg shadow-xl mb-6 sm:mb-8 text-white text-base sm:text-lg font-semibold animate-fade-in ${message.type === 'success' ? 'bg-green-600' : message.type === 'error' ? 'bg-red-600' : message.type === 'info' ? 'bg-blue-600' : 'bg-yellow-600'}`}>
+          {message.text}
         </div>
-      </div>
-    );
-  }
-
-  // Loading screen
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl shadow-2xl p-12 text-center">
-          <h1 className="text-5xl font-bold text-gray-900 mb-6">Loading...</h1>
-        </div>
-      </div>
-    );
-  }
-
-  if (!config) return <div className="p-8 text-center">Error loading game</div>;
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-12 px-4">
-      <div className="max-w-6xl mx-auto bg-white rounded-xl shadow-2xl p-8">
-        
-        {/* Title */}
-        <h1 className="text-4xl font-bold text-center text-gray-900 mb-8">
-          {config.gameTitle}
-        </h1>
-        
-        {/* Progress and Timer */}
-        <div className="text-center mb-8 bg-gray-50 p-6 rounded-lg">
-          <div className="text-3xl font-bold text-indigo-700 mb-3">
-            Found: {found.size} / {config.differences.length}
-          </div>
-          <div className="w-full max-w-sm mx-auto bg-gray-200 rounded-full h-4 mb-4">
-            <div 
-              className="bg-indigo-500 h-full rounded-full transition-all duration-500"
-              style={{ width: `${(found.size / config.differences.length) * 100}%` }}
+      )}
+      <h1 className="text-6xl font-extrabold text-gray-800 mb-6 tracking-tight drop-shadow-lg text-transparent bg-clip-text bg-gradient-to-r from-purple-500 to-indigo-600">Spot The Difference</h1>
+      <p className="text-lg sm:text-2xl text-gray-700 mb-6 sm:mb-8 font-light text-center px-2">Find all {game?.differences.length} differences</p>
+      <div className="flex flex-col lg:flex-row gap-6 sm:gap-10 mb-8 sm:mb-10 w-full max-w-7xl justify-center items-center">
+        {[game?.images.image1, game?.images.image2].map((src, idx) => (
+          <div key={idx} className="relative flex-1 w-full max-w-md mx-auto rounded-2xl overflow-hidden shadow-2xl transform transition-transform duration-300 hover:scale-[1.01] hover:shadow-3xl border-4 border-white-alpha-50">
+            <img
+              src={src}
+              alt={`Spot the difference image ${idx + 1}`}
+              className="w-full rounded-2xl select-none object-cover transition-all duration-300 ease-in-out"
+              draggable={false}
+              onClick={checkDiff}
+              style={{ aspectRatio: '3/2' }}
             />
+            {game?.differences.map((d, i) => (
+              <div
+                key={i}
+                className={`absolute border-4 border-dashed rounded-lg pointer-events-none transition-all duration-300 ${foundDiffs.includes(i) ? 'border-green-400 bg-green-300 bg-opacity-40 animate-pulse-once' : 'border-blue-400 opacity-0'}`}
+                style={{
+                  left: `${(d.x / 600) * 100}%`,
+                  top: `${(d.y / 400) * 100}%`,
+                  width: `${(d.width / 600) * 100}%`,
+                  height: `${(d.height / 400) * 100}%`,
+                }}
+              />
+            ))}
           </div>
-          <div className="text-xl font-medium text-gray-700">
-            Time: {formatTime(elapsedTime)}
-          </div>
-        </div>
-
-        {/* Images */}
-        <div className="flex flex-col lg:flex-row gap-8 justify-center">
-          <GameImage 
-            src={config.images.image1} 
-            alt="Image 1" 
-            differences={config.differences} 
-            found={found} 
-            handleClick={handleClick} 
-          />
-          <GameImage 
-            src={config.images.image2} 
-            alt="Image 2" 
-            differences={config.differences} 
-            found={found} 
-            handleClick={handleClick} 
-          />
-        </div>
-
-        {/* Success Modal */}
-        {isCompleteGame && (
-          <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
-            <div className="bg-white p-8 rounded-xl shadow-3xl text-center max-w-md w-full animate-pop-in">
-              <h2 className="text-3xl font-bold text-green-600 mb-4">🎉 Congratulations!</h2>
-              <p className="text-gray-700 mb-6">You found all {config.differences.length} differences in {formatTime(elapsedTime)}!</p>
-              <button 
-                onClick={resetGame}
-                className="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition"
-              >
-                Play Again
-              </button>
-            </div>
-          </div>
-        )}
+        ))}
+      </div>
+      <div className="text-xl sm:text-3xl font-bold text-gray-800 mb-3 sm:mb-4">
+        Differences Found: <span className="text-purple-600">{foundDiffs.length}</span> / <span className="text-gray-600">{game?.differences.length}</span>
+      </div>
+      <div className="text-lg sm:text-2xl font-semibold text-gray-700 mb-8 sm:mb-10">
+        Time: <span className="text-indigo-600 font-bold">{timeTaken}</span> seconds
+      </div>
+      <div className="flex space-x-4 sm:space-x-6">
+        <button onClick={resetGame} className="px-6 py-3 sm:px-10 sm:py-4 bg-blue-600 text-white font-bold rounded-full shadow-xl hover:bg-blue-700 transition transform hover:-translate-y-1 text-base sm:text-xl tracking-wide uppercase focus:outline-none focus:ring-4 focus:ring-blue-300">
+          New Game
+        </button>
       </div>
     </div>
   );
+
+  const StartScreen = () => (
+    <div className="flex flex-col items-center justify-center bg-gradient-to-br from-blue-100 to-purple-100 min-h-screen p-4 sm:p-8 text-center font-sans">
+      <h1 className="text-5xl sm:text-7xl font-extrabold text-gray-900 mb-4 sm:mb-6 leading-tight drop-shadow-lg text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 to-purple-600">Welcome to SpotDiff!</h1>
+      <p className="text-lg sm:text-2xl text-gray-700 mb-8 sm:mb-12 max-w-3xl leading-relaxed px-2">A fun game to test your observation skills. Find all the differences between two seemingly identical images.</p>
+      <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-8 items-center justify-center w-full max-w-md sm:max-w-none px-4">
+        {customConfig && (
+          <button
+            onClick={() => loadGame(customConfig!)}
+            className="w-full sm:w-auto px-8 py-4 sm:px-12 sm:py-6 bg-green-600 text-white font-bold rounded-full shadow-xl hover:bg-green-700 transition transform hover:-translate-y-1 text-xl sm:text-2xl tracking-wide uppercase focus:outline-none focus:ring-4 focus:ring-green-300"
+          >
+            Start Custom Game
+          </button>
+        )}
+        <button
+          onClick={() => setShowConfig(true)}
+          className={`w-full sm:w-auto px-8 py-4 sm:px-12 sm:py-6 bg-purple-600 text-white font-bold rounded-full shadow-xl hover:bg-purple-700 transition transform hover:-translate-y-1 text-xl sm:text-2xl tracking-wide uppercase focus:outline-none focus:ring-4 focus:ring-purple-300 ${!customConfig ? 'w-full max-w-sm' : ''}`}
+        >
+          {customConfig ? 'Configure Game' : 'Create/Configure Game'}
+        </button>
+      </div>
+    </div>
+  );
+
+  if (showConfig) {
+    return <GameConfigComponent onSave={handleSave} onCancel={handleCancel} initialConfig={customConfig || undefined} />;
+  }
+
+  return game ? GameDisplay() : StartScreen();
 } 
