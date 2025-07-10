@@ -1,0 +1,9 @@
+{
+  "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^24.0.12"
+  },
+  "dependencies": {
+    "canvas-confetti": "^1.9.3"
+  }
+}
